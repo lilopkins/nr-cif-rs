@@ -13,3 +13,6 @@ chrono = "0.4.31"
 fixedlength-format-parser = "0.1.0"
 getset = "0.1.2"
 thiserror = "1.0.50"
+
+[dev-dependencies]
+libflate = "2.0.0"
