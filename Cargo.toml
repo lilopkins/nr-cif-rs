@@ -1,6 +1,7 @@
 [package]
 name = "nr-cif"
 authors = [ "Lily Hopkins <lily@hpkns.uk>" ]
+description = "Handle Network Rail CIF files."
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
