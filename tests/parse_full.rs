@@ -7,7 +7,7 @@ fn test_parse_full() {
     let f = File::open("./tests/24-full.cif").expect("cannot read file");
     let cif_result = parse_cif(f);
     match cif_result {
-        Ok(file) => panic!("{file:?}"),
+        Ok(file) => println!("{file:?}"),
         Err(e) => panic!("{e}"),
     }
 }
