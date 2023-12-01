@@ -1,5 +1,5 @@
-use nr_cif::prelude::*;
 use libflate::gzip::Decoder;
+use nr_cif::prelude::*;
 
 use std::fs::File;
 

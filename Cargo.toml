@@ -2,9 +2,13 @@
 name = "nr-cif"
 authors = [ "Lily Hopkins <lily@hpkns.uk>" ]
 description = "Handle Network Rail CIF files."
+repository = "https://github.com/lilopkins/nr-cif-rs"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
+exclude = [
+    "tests/*.cif*"
+]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
