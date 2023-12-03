@@ -147,7 +147,9 @@ impl ScheduleDatabase {
                     }
                     errors.push((record_idx, e));
                     #[cfg(feature = "panic-on-first-error")]
-                    panic!("Came across an error and the `panic-on-first-error` feature is enabled.");
+                    panic!(
+                        "Came across an error and the `panic-on-first-error` feature is enabled."
+                    );
                 }
                 bundle.clear();
             }
@@ -492,11 +494,7 @@ impl ScheduleDatabase {
                     } else {
                         TimingLoad::NotSpecified
                     };
-                    schedule.speed = speed
-                        .trim()
-                        .parse()
-                        .ok()
-                        .unwrap_or(0);
+                    schedule.speed = speed.trim().parse().ok().unwrap_or(0);
                     for c in operating_characteristics.chars() {
                         match c {
                             'B' => schedule
