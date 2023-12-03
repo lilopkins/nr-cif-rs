@@ -1,6 +1,7 @@
 use std::io::{self, prelude::*};
 
 use crate::types::*;
+use log::debug;
 use thiserror::Error;
 
 /// An error that occurred during parsing a CIF file.
@@ -14,11 +15,16 @@ pub enum CIFParseError {
 
 /// Parse a CIF file into a programmatic [`CIFFile`].
 pub fn parse_cif<R: Read>(mut content_reader: R) -> Result<crate::types::CIFFile, CIFParseError> {
+    debug!("Parsing CIF data...");
     let mut file = CIFFile::new();
     let mut buf = [0u8; 81];
     // human readable line of the input file
     let mut line = 1;
     loop {
+        if line % 10000 == 0 {
+            log::debug!("Parsed {line} CIF records...");
+        }
+
         // read 80 character row + new line
         // the file should only contain ASCII characters, so we don't need to worry
         // about multi-byte characters
@@ -37,5 +43,6 @@ pub fn parse_cif<R: Read>(mut content_reader: R) -> Result<crate::types::CIFFile
         }
         line += 1;
     }
+    log::debug!("Parsed {line} records.");
     Ok(file)
 }
