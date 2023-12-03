@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, str::FromStr};
 
 use bitflags::bitflags;
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
@@ -36,6 +36,8 @@ pub enum ScheduleApplyError {
     InvalidCateringCode(char),
     #[error("invalid STP indicator in basic schedule record")]
     InvalidSTPIndicator(char),
+    #[error("invalid journey time in location record")]
+    InvalidJourneyTime(String),
 }
 
 #[derive(Debug, Clone, Getters)]
@@ -588,6 +590,90 @@ impl ScheduleDatabase {
                     schedule.atoc_code = atoc_code.trim().to_string();
                     schedule.subject_to_performance_monitoring = *applicable_timetable_code == 'Y';
                 }
+                CIFRecord::LocationOrigin {
+                    location,
+                    scheduled_departure_time,
+                    public_departure_time,
+                    platform,
+                    line,
+                    engineering_allowance: _,
+                    pathing_allowance: _,
+                    activity,
+                    performance_allowance: _,
+                } => schedule.journey.push(JourneyLocation {
+                    tiploc: location.trim().to_string(),
+                    arrival_time: None,
+                    departure_time: Some(scheduled_departure_time.parse()?),
+                    passing_time: None,
+                    public_arrival: None,
+                    public_departure: Some(public_departure_time.parse()?),
+                    platform: platform.trim().to_string(),
+                    line: line.trim().to_string(),
+                    activity: activity.trim().to_string(),
+                }),
+                CIFRecord::LocationIntermediate {
+                    location,
+                    scheduled_arrival_time,
+                    scheduled_departure_time,
+                    scheduled_pass,
+                    public_arrival_time,
+                    public_departure_time,
+                    platform,
+                    line,
+                    path: _,
+                    activity,
+                    engineering_allowance: _,
+                    pathing_allowance: _,
+                    performance_allowance: _,
+                } => schedule.journey.push(JourneyLocation {
+                    tiploc: location.trim().to_string(),
+                    arrival_time: if scheduled_arrival_time.trim().is_empty() {
+                        None
+                    } else {
+                        Some(scheduled_arrival_time.parse()?)
+                    },
+                    departure_time: if scheduled_departure_time.trim().is_empty() {
+                        None
+                    } else {
+                        Some(scheduled_departure_time.parse()?)
+                    },
+                    passing_time: if scheduled_pass.trim().is_empty() {
+                        None
+                    } else {
+                        Some(scheduled_pass.parse()?)
+                    },
+                    public_arrival: if public_arrival_time.trim().is_empty() {
+                        None
+                    } else {
+                        Some(public_arrival_time.parse()?)
+                    },
+                    public_departure: if public_departure_time.trim().is_empty() {
+                        None
+                    } else {
+                        Some(public_departure_time.parse()?)
+                    },
+                    platform: platform.trim().to_string(),
+                    line: line.trim().to_string(),
+                    activity: activity.trim().to_string(),
+                }),
+                CIFRecord::LocationTerminate {
+                    location,
+                    scheduled_arrival_time,
+                    public_arrival_time,
+                    platform,
+                    path: _,
+                    activity,
+                } => schedule.journey.push(JourneyLocation {
+                    tiploc: location.trim().to_string(),
+                    arrival_time: Some(scheduled_arrival_time.parse()?),
+                    departure_time: None,
+                    passing_time: None,
+                    public_arrival: Some(public_arrival_time.parse()?),
+                    public_departure: None,
+                    platform: platform.trim().to_string(),
+                    line: String::new(),
+                    activity: activity.trim().to_string(),
+                }),
 
                 _ => (),
             }
@@ -660,6 +746,8 @@ pub struct Schedule {
     catering: Vec<Catering>,
     #[getset(get = "pub")]
     stp_indicator: STPIndicator,
+    #[getset(get = "pub")]
+    journey: Vec<JourneyLocation>,
 }
 
 impl Schedule {
@@ -685,6 +773,7 @@ impl Schedule {
             reservations: Reservations::Possible,
             catering: vec![],
             stp_indicator: STPIndicator::PermanentAssociation,
+            journey: vec![],
         }
     }
 }
@@ -899,4 +988,68 @@ pub enum STPIndicator {
     STPCancellationOfPermanentAssociation,
     STPOverlayOfPermanentAssociation,
     PermanentAssociation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Getters)]
+pub struct JourneyLocation {
+    #[getset(get = "pub")]
+    tiploc: String,
+    #[getset(get = "pub")]
+    arrival_time: Option<JourneyTime>,
+    #[getset(get = "pub")]
+    departure_time: Option<JourneyTime>,
+    #[getset(get = "pub")]
+    passing_time: Option<JourneyTime>,
+    #[getset(get = "pub")]
+    public_arrival: Option<JourneyTime>,
+    #[getset(get = "pub")]
+    public_departure: Option<JourneyTime>,
+    #[getset(get = "pub")]
+    platform: String,
+    #[getset(get = "pub")]
+    line: String,
+    #[getset(get = "pub")]
+    activity: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Getters)]
+pub struct JourneyTime {
+    #[getset(get = "pub")]
+    hour: u8,
+    #[getset(get = "pub")]
+    minute: u8,
+    #[getset(get = "pub")]
+    half: bool,
+}
+
+impl FromStr for JourneyTime {
+    type Err = ScheduleApplyError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut time = Self {
+            hour: 0,
+            minute: 0,
+            half: false,
+        };
+        let hour = &s[0..2];
+        let min = &s[2..4];
+
+        time.hour = hour
+            .parse()
+            .map_err(|_| ScheduleApplyError::InvalidJourneyTime(s.to_string()))?;
+        time.minute = min
+            .parse()
+            .map_err(|_| ScheduleApplyError::InvalidJourneyTime(s.to_string()))?;
+
+        if let Some(c) = s.chars().nth(5) {
+            if c == 'H' {
+                time.half = true;
+            } else if c == ' ' {
+                time.half = false;
+            } else {
+                return Err(ScheduleApplyError::InvalidJourneyTime(s.to_string()));
+            }
+        }
+        Ok(time)
+    }
 }
