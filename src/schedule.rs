@@ -851,37 +851,38 @@ impl FromStr for JourneyTime {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn bs_record_to_schedule(
     schedule: &mut Schedule,
-    uid: &String,
-    date_runs_from: &String,
-    date_runs_to: &String,
-    days_run: &String,
+    uid: &str,
+    date_runs_from: &str,
+    date_runs_to: &str,
+    days_run: &str,
     bank_holiday_running: &char,
     train_status: &char,
-    train_category: &String,
-    train_identity: &String,
+    train_category: &str,
+    train_identity: &str,
     portion_id: &char,
-    power_type: &String,
-    timing_load: &String,
-    speed: &String,
-    operating_characteristics: &String,
+    power_type: &str,
+    timing_load: &str,
+    speed: &str,
+    operating_characteristics: &str,
     seating_class: &char,
     sleepers: &char,
     reservations: &char,
-    catering_code: &String,
+    catering_code: &str,
     stp_indicator: &char,
 ) -> Result<(), ScheduleApplyError> {
-    schedule.train_uid = uid.clone();
-    schedule.runs_from = NaiveDate::parse_from_str(&date_runs_from, "%y%m%d")
-        .map_err(|_| ScheduleApplyError::InvalidScheduleDate(date_runs_from.clone()))?;
-    schedule.runs_to = NaiveDate::parse_from_str(&date_runs_to, "%y%m%d")
-        .map_err(|_| ScheduleApplyError::InvalidScheduleDate(date_runs_to.clone()))?;
+    schedule.train_uid = uid.to_string();
+    schedule.runs_from = NaiveDate::parse_from_str(date_runs_from, "%y%m%d")
+        .map_err(|_| ScheduleApplyError::InvalidScheduleDate(date_runs_from.to_string()))?;
+    schedule.runs_to = NaiveDate::parse_from_str(date_runs_to, "%y%m%d")
+        .map_err(|_| ScheduleApplyError::InvalidScheduleDate(date_runs_to.to_string()))?;
     schedule.days_run = DaysRun::from_bits(
-        u8::from_str_radix(&days_run, 2)
-            .map_err(|_| ScheduleApplyError::InvalidDaysRun(days_run.clone()))?,
+        u8::from_str_radix(days_run, 2)
+            .map_err(|_| ScheduleApplyError::InvalidDaysRun(days_run.to_string()))?,
     )
-    .ok_or(ScheduleApplyError::InvalidDaysRun(days_run.clone()))?;
+    .ok_or(ScheduleApplyError::InvalidDaysRun(days_run.to_string()))?;
     schedule.bank_holiday_running = match bank_holiday_running {
         'X' => BankHolidayRunning::NotOnSpecificBankHolidayMondays,
         'G' => BankHolidayRunning::NotOnGlasgowBankHolidays,
@@ -901,7 +902,7 @@ fn bs_record_to_schedule(
         '5' => TrainStatus::STPBus,
         _ => return Err(ScheduleApplyError::InvalidTrainStatus(*train_status)),
     };
-    schedule.train_category = match train_category.as_str() {
+    schedule.train_category = match train_category {
         "  " => TrainCategory::NotSpecified,
         "OL" => TrainCategory::LondonUnderground,
         "OU" => TrainCategory::UnadvertisedOrdinaryPassenger,
@@ -959,7 +960,7 @@ fn bs_record_to_schedule(
         "H6" => TrainCategory::RfDEuropeanChannelTunnelJointVenture,
         _ => {
             return Err(ScheduleApplyError::InvalidTrainCategory(
-                train_category.clone(),
+                train_category.to_string(),
             ))
         }
     };
@@ -975,7 +976,7 @@ fn bs_record_to_schedule(
         "EML" => PowerType::EMUPlusLocomotive,
         "EMU" => PowerType::ElectricMultipleUnit,
         "HST" => PowerType::HighSpeedTrain,
-        _ => return Err(ScheduleApplyError::InvalidPowerType(power_type.clone())),
+        _ => return Err(ScheduleApplyError::InvalidPowerType(power_type.to_string())),
     };
     schedule.timing_load = if schedule.power_type == PowerType::DieselMechanicalMultipleUnit
         || schedule.power_type == PowerType::DieselElectricMultipleUnit
@@ -997,7 +998,9 @@ fn bs_record_to_schedule(
                 if let Ok(n) = timing_load.trim().parse::<u16>() {
                     TimingLoad::SpecificClass(n)
                 } else {
-                    return Err(ScheduleApplyError::InvalidTimingLoad(timing_load.clone()));
+                    return Err(ScheduleApplyError::InvalidTimingLoad(
+                        timing_load.to_string(),
+                    ));
                 }
             }
         }
@@ -1012,7 +1015,9 @@ fn bs_record_to_schedule(
                 if let Ok(n) = timing_load.trim().parse::<u16>() {
                     TimingLoad::SpecificClass(n)
                 } else {
-                    return Err(ScheduleApplyError::InvalidTimingLoad(timing_load.clone()));
+                    return Err(ScheduleApplyError::InvalidTimingLoad(
+                        timing_load.to_string(),
+                    ));
                 }
             }
         }
@@ -1027,7 +1032,9 @@ fn bs_record_to_schedule(
         } else if let Ok(n) = timing_load.trim().parse::<u16>() {
             TimingLoad::LoadInTonnes(n)
         } else {
-            return Err(ScheduleApplyError::InvalidTimingLoad(timing_load.clone()));
+            return Err(ScheduleApplyError::InvalidTimingLoad(
+                timing_load.to_string(),
+            ));
         }
     } else {
         TimingLoad::NotSpecified
