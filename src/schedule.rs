@@ -1012,7 +1012,7 @@ pub struct JourneyLocation {
     activity: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Getters)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Getters)]
 pub struct JourneyTime {
     #[getset(get = "pub")]
     hour: u8,
