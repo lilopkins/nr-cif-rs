@@ -1012,7 +1012,7 @@ pub struct JourneyLocation {
     activity: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Getters)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Ord, Getters)]
 pub struct JourneyTime {
     #[getset(get = "pub")]
     hour: u8,
@@ -1020,6 +1020,20 @@ pub struct JourneyTime {
     minute: u8,
     #[getset(get = "pub")]
     half: bool,
+}
+
+impl PartialOrd for JourneyTime {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        match self.hour.partial_cmp(&other.hour) {
+            Some(core::cmp::Ordering::Equal) => {}
+            ord => return ord,
+        }
+        match self.minute.partial_cmp(&other.minute) {
+            Some(core::cmp::Ordering::Equal) => {}
+            ord => return ord,
+        }
+        self.half.partial_cmp(&other.half)
+    }
 }
 
 impl FromStr for JourneyTime {
