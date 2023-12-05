@@ -475,8 +475,8 @@ impl ScheduleDatabase {
 
         self.schedules
             .entry(schedule.train_uid.clone())
-            .and_modify(|v| v.push(schedule))
-            .or_insert(vec![]);
+            .and_modify(|v| v.push(schedule.clone()))
+            .or_insert(vec![schedule]);
         Ok(())
     }
 }
