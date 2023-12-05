@@ -1041,7 +1041,7 @@ impl FromStr for JourneyTime {
             .parse()
             .map_err(|_| ScheduleApplyError::InvalidJourneyTime(s.to_string()))?;
 
-        if let Some(c) = s.chars().nth(5) {
+        if let Some(c) = s.chars().nth(4) {
             if c == 'H' {
                 time.half = true;
             } else if c == ' ' {
