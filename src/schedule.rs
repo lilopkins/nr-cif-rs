@@ -90,40 +90,19 @@ impl ScheduleDatabase {
             bundle.push(record);
 
             // Check type
-            let submit = match record.kind() {
-                "HD" => true,
-                "ZZ" => true,
-                "AA" => true,
-                "LT" => true,
-                "TI" => true,
-                "TA" => true,
-                "TD" => true,
-                "BS" => {
+            let submit = match &record {
+                CIFRecord::Header { .. } => true,
+                CIFRecord::Trailer => true,
+                CIFRecord::Association { .. } => true,
+                CIFRecord::LocationTerminate { .. } => true,
+                CIFRecord::TIPLOCInsert { .. } => true,
+                CIFRecord::TIPLOCAmend { .. } => true,
+                CIFRecord::TIPLOCDelete { .. } => true,
+                CIFRecord::BasicSchedule { .. } => {
                     if let CIFRecord::BasicSchedule {
                         transaction_type,
-                        train_uid: _,
-                        date_runs_from: _,
-                        date_runs_to: _,
-                        days_run: _,
-                        bank_holiday_running: _,
-                        train_status: _,
-                        train_category: _,
-                        train_identity: _,
-                        headcode: _,
-                        course_indicator: _,
-                        train_service_code: _,
-                        portion_id: _,
-                        power_type: _,
-                        timing_load: _,
-                        speed: _,
-                        operating_characteristics: _,
-                        seating_class: _,
-                        sleepers: _,
-                        reservations: _,
-                        connection_indicator: _,
-                        catering_code: _,
-                        service_branding: _,
                         stp_indicator,
+                        ..
                     } = record
                     {
                         // only submit a BS record alone if it's a delete, or a cancellation
@@ -134,7 +113,7 @@ impl ScheduleDatabase {
                 }
                 _ => false,
             };
-            trace!("Record type: {}, submitting: {submit}", record.kind());
+            trace!("Record: {:?}, submitting: {submit}", record);
 
             if submit {
                 let r = if bundle.len() == 1 {
@@ -170,15 +149,10 @@ impl ScheduleDatabase {
     fn apply_single_record(&mut self, record: &CIFRecord) -> Result<(), ScheduleApplyError> {
         match record {
             CIFRecord::Header {
-                file_mainframe_identity: _,
                 date_of_extract,
                 time_of_extract,
-                current_file_reference: _,
-                last_file_reference: _,
                 update_indicator,
-                version: _,
-                user_start_date: _,
-                user_end_date: _,
+                ..
             } => {
                 if *update_indicator == 'F' {
                     // full update, empty database
@@ -200,14 +174,9 @@ impl ScheduleDatabase {
 
             CIFRecord::TIPLOCInsert {
                 tiploc,
-                capitals_identification: _,
-                nlc: _,
-                nlc_check_char: _,
                 tps_description,
-                stanox: _,
-                po_mcp_code: _,
                 three_alpha_code,
-                nlc_description: _,
+                ..
             } => {
                 info!("New TIPLOC: {}", tiploc.trim());
                 self.tiplocs.insert(
@@ -221,15 +190,10 @@ impl ScheduleDatabase {
             }
             CIFRecord::TIPLOCAmend {
                 tiploc,
-                capitals_identification: _,
-                nlc: _,
-                nlc_check_char: _,
                 tps_description,
-                stanox: _,
-                po_mcp_code: _,
                 three_alpha_code,
-                nlc_description: _,
                 new_tiploc,
+                ..
             } => {
                 info!("Amendment for TIPLOC {}", tiploc.trim());
                 let tiploc = if new_tiploc.trim().is_empty() {
@@ -262,9 +226,6 @@ impl ScheduleDatabase {
                 train_status,
                 train_category,
                 train_identity,
-                headcode: _,
-                course_indicator: _,
-                train_service_code: _,
                 portion_id,
                 power_type,
                 timing_load,
@@ -273,10 +234,9 @@ impl ScheduleDatabase {
                 seating_class,
                 sleepers,
                 reservations,
-                connection_indicator: _,
                 catering_code,
-                service_branding: _,
                 stp_indicator,
+                ..
             } => {
                 assert!(
                     *transaction_type == 'D' || *stp_indicator == 'C',
@@ -338,9 +298,6 @@ impl ScheduleDatabase {
                     train_status,
                     train_category,
                     train_identity,
-                    headcode: _,
-                    course_indicator: _,
-                    train_service_code: _,
                     portion_id,
                     power_type,
                     timing_load,
@@ -349,10 +306,9 @@ impl ScheduleDatabase {
                     seating_class,
                     sleepers,
                     reservations,
-                    connection_indicator: _,
                     catering_code,
-                    service_branding: _,
                     stp_indicator,
+                    ..
                 } => {
                     let uid = train_uid.trim().to_string();
                     if *transaction_type == 'R' && !self.schedules.contains_key(&uid) {
@@ -382,10 +338,9 @@ impl ScheduleDatabase {
                     )?;
                 }
                 CIFRecord::BasicScheduleExtended {
-                    traction_class: _,
-                    uic_code: _,
                     atoc_code,
                     applicable_timetable_code,
+                    ..
                 } => {
                     schedule.atoc_code = atoc_code.trim().to_string();
                     schedule.subject_to_performance_monitoring = *applicable_timetable_code == 'Y';
@@ -396,10 +351,8 @@ impl ScheduleDatabase {
                     public_departure_time,
                     platform,
                     line,
-                    engineering_allowance: _,
-                    pathing_allowance: _,
                     activity,
-                    performance_allowance: _,
+                    ..
                 } => schedule.journey.push(JourneyLocation {
                     tiploc: location.trim().to_string(),
                     arrival_time: None,
@@ -420,11 +373,8 @@ impl ScheduleDatabase {
                     public_departure_time,
                     platform,
                     line,
-                    path: _,
                     activity,
-                    engineering_allowance: _,
-                    pathing_allowance: _,
-                    performance_allowance: _,
+                    ..
                 } => schedule.journey.push(JourneyLocation {
                     tiploc: location.trim().to_string(),
                     arrival_time: if scheduled_arrival_time.trim().is_empty() {
@@ -461,8 +411,8 @@ impl ScheduleDatabase {
                     scheduled_arrival_time,
                     public_arrival_time,
                     platform,
-                    path: _,
                     activity,
+                    ..
                 } => schedule.journey.push(JourneyLocation {
                     tiploc: location.trim().to_string(),
                     arrival_time: Some(scheduled_arrival_time.parse()?),
