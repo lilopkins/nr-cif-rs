@@ -10,6 +10,8 @@ use crate::types::{CIFFile, CIFRecord};
 
 #[derive(Error, Debug)]
 pub enum ScheduleApplyError {
+    #[error("the data being applied is older than the data already loaded")]
+    AttemptingToApplyOlderData,
     #[error("invalid extract date and time in header record")]
     InvalidHeaderDateTime(String),
     #[error("invalid date in basic schedule record")]
@@ -189,7 +191,11 @@ impl ScheduleDatabase {
                 let time = NaiveTime::parse_from_str(time_of_extract, "%H%M").map_err(|_| {
                     ScheduleApplyError::InvalidHeaderDateTime(time_of_extract.clone())
                 })?;
-                self.extract_date_time = date.and_time(time);
+                let date_and_time = date.and_time(time);
+                if self.extract_date_time > date_and_time {
+                    return Err(ScheduleApplyError::AttemptingToApplyOlderData);
+                }
+                self.extract_date_time = date_and_time;
             }
 
             CIFRecord::TIPLOCInsert {
