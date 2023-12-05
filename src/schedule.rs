@@ -47,7 +47,7 @@ pub struct ScheduleDatabase {
     #[getset(get = "pub")]
     tiplocs: HashMap<String, TIPLOC>,
     #[getset(get = "pub")]
-    schedules: HashMap<String, Schedule>,
+    schedules: HashMap<String, Vec<Schedule>>,
 }
 
 impl Default for ScheduleDatabase {
@@ -121,11 +121,11 @@ impl ScheduleDatabase {
                         connection_indicator: _,
                         catering_code: _,
                         service_branding: _,
-                        stp_indicator: _,
+                        stp_indicator,
                     } = record
                     {
-                        // only submit a BS record alone if it's a delete
-                        *transaction_type == 'D'
+                        // only submit a BS record alone if it's a delete, or a cancellation
+                        *transaction_type == 'D' || *stp_indicator == 'C'
                     } else {
                         false
                     }
@@ -249,34 +249,62 @@ impl ScheduleDatabase {
             CIFRecord::BasicSchedule {
                 transaction_type,
                 train_uid,
-                date_runs_from: _,
-                date_runs_to: _,
-                days_run: _,
-                bank_holiday_running: _,
-                train_status: _,
-                train_category: _,
-                train_identity: _,
+                date_runs_from,
+                date_runs_to,
+                days_run,
+                bank_holiday_running,
+                train_status,
+                train_category,
+                train_identity,
                 headcode: _,
                 course_indicator: _,
                 train_service_code: _,
-                portion_id: _,
-                power_type: _,
-                timing_load: _,
-                speed: _,
-                operating_characteristics: _,
-                seating_class: _,
-                sleepers: _,
-                reservations: _,
+                portion_id,
+                power_type,
+                timing_load,
+                speed,
+                operating_characteristics,
+                seating_class,
+                sleepers,
+                reservations,
                 connection_indicator: _,
-                catering_code: _,
+                catering_code,
                 service_branding: _,
-                stp_indicator: _,
+                stp_indicator,
             } => {
-                assert_eq!(
-                    *transaction_type, 'D',
-                    "transaction type must be delete to be processed as a single record"
+                assert!(
+                    *transaction_type == 'D' || *stp_indicator == 'C',
+                    "transaction type must be delete, or it must be a cancellation to be processed as a single record"
                 );
-                self.schedules.remove(train_uid);
+                if *transaction_type == 'D' {
+                    self.schedules.remove(train_uid);
+                } else {
+                    let mut sch = Schedule::new();
+                    bs_record_to_schedule(
+                        &mut sch,
+                        train_uid,
+                        date_runs_from,
+                        date_runs_to,
+                        days_run,
+                        bank_holiday_running,
+                        train_status,
+                        train_category,
+                        train_identity,
+                        portion_id,
+                        power_type,
+                        timing_load,
+                        speed,
+                        operating_characteristics,
+                        seating_class,
+                        sleepers,
+                        reservations,
+                        catering_code,
+                        stp_indicator,
+                    )?;
+                    self.schedules
+                        .entry(train_uid.clone())
+                        .and_modify(|v| v.push(sch));
+                }
             }
 
             _ => (),
@@ -325,261 +353,27 @@ impl ScheduleDatabase {
                         warn!("A record is trying to revise schedule {uid}, but it doesn't exist in the database. Inserting it as new...");
                     }
 
-                    schedule.train_uid = uid;
-                    schedule.runs_from = NaiveDate::parse_from_str(date_runs_from, "%y%m%d")
-                        .map_err(|_| {
-                            ScheduleApplyError::InvalidScheduleDate(date_runs_from.clone())
-                        })?;
-                    schedule.runs_to =
-                        NaiveDate::parse_from_str(date_runs_to, "%y%m%d").map_err(|_| {
-                            ScheduleApplyError::InvalidScheduleDate(date_runs_to.clone())
-                        })?;
-                    schedule.days_run = DaysRun::from_bits(
-                        u8::from_str_radix(days_run, 2)
-                            .map_err(|_| ScheduleApplyError::InvalidDaysRun(days_run.clone()))?,
-                    )
-                    .ok_or(ScheduleApplyError::InvalidDaysRun(days_run.clone()))?;
-                    schedule.bank_holiday_running = match bank_holiday_running {
-                        'X' => BankHolidayRunning::NotOnSpecificBankHolidayMondays,
-                        'G' => BankHolidayRunning::NotOnGlasgowBankHolidays,
-                        _ => BankHolidayRunning::RunsNormally,
-                    };
-                    schedule.train_status = match train_status {
-                        ' ' => TrainStatus::NotSpecified,
-                        'B' => TrainStatus::Bus,
-                        'F' => TrainStatus::Freight,
-                        'P' => TrainStatus::PassengerAndParcels,
-                        'S' => TrainStatus::Ship,
-                        'T' => TrainStatus::Trip,
-                        '1' => TrainStatus::STPPassengerAndParcels,
-                        '2' => TrainStatus::STPFreight,
-                        '3' => TrainStatus::STPTrip,
-                        '4' => TrainStatus::STPShip,
-                        '5' => TrainStatus::STPBus,
-                        _ => return Err(ScheduleApplyError::InvalidTrainStatus(*train_status)),
-                    };
-                    schedule.train_category = match train_category.as_str() {
-                        "  " => TrainCategory::NotSpecified,
-                        "OL" => TrainCategory::LondonUnderground,
-                        "OU" => TrainCategory::UnadvertisedOrdinaryPassenger,
-                        "OO" => TrainCategory::OrdinaryPassenger,
-                        "OS" => TrainCategory::StaffTrain,
-                        "OW" => TrainCategory::Mixed,
-                        "XC" => TrainCategory::ChannelTunnel,
-                        "XD" => TrainCategory::Sleeper,
-                        "XI" => TrainCategory::International,
-                        "XR" => TrainCategory::Motorail,
-                        "XU" => TrainCategory::UnadvertisedExpress,
-                        "XX" => TrainCategory::ExpressPassenger,
-                        "XZ" => TrainCategory::SleeperDomestic,
-                        "BR" => TrainCategory::BusReplacementDueToEngineering,
-                        "BS" => TrainCategory::BusWTTService,
-                        "SS" => TrainCategory::Ship,
-                        "EE" => TrainCategory::EmptyCoachingStock,
-                        "EL" => TrainCategory::ECSLondonUnderground,
-                        "ES" => TrainCategory::ECSAndStaff,
-                        "JJ" => TrainCategory::Postal,
-                        "PM" => TrainCategory::PostOfficeControlledParcels,
-                        "PP" => TrainCategory::Parcels,
-                        "PV" => TrainCategory::EmptyNPCCS,
-                        "DD" => TrainCategory::Departmental,
-                        "DH" => TrainCategory::CivilEngineer,
-                        "DI" => TrainCategory::MechanicalAndElectricalEngineer,
-                        "DQ" => TrainCategory::Stores,
-                        "DT" => TrainCategory::Test,
-                        "DY" => TrainCategory::SignalAndTelecommunicationsEngineer,
-                        "ZB" => TrainCategory::LocomotiveAndBrakeVan,
-                        "ZZ" => TrainCategory::LightLocomotive,
-                        "J2" => TrainCategory::RfDAutomotiveComponents,
-                        "H2" => TrainCategory::RfDAutomotiveVehicles,
-                        "J3" => TrainCategory::RfDEdibleProducts,
-                        "J4" => TrainCategory::RfDIndustrialMinerals,
-                        "J5" => TrainCategory::RfDChemicals,
-                        "J6" => TrainCategory::RfDBuildingMaterials,
-                        "J8" => TrainCategory::RfDGeneralMerchandise,
-                        "H8" => TrainCategory::RfDEuropean,
-                        "J9" => TrainCategory::RfDFreightlinerContracts,
-                        "H9" => TrainCategory::RfDFreightlinerOther,
-                        "A0" => TrainCategory::CoalDistributive,
-                        "E0" => TrainCategory::CoalElectricityMGR,
-                        "B0" => TrainCategory::CoalOtherAndNuclear,
-                        "B1" => TrainCategory::Metals,
-                        "B4" => TrainCategory::Aggregates,
-                        "B5" => TrainCategory::DomesticAndIndustrialWaste,
-                        "B6" => TrainCategory::BuildingMaterials,
-                        "B7" => TrainCategory::PetroleumProducts,
-                        "H0" => TrainCategory::RfDEuropeanChannelTunnelMixed,
-                        "H1" => TrainCategory::RfDEuropeanChannelTunnelIntermodal,
-                        "H3" => TrainCategory::RfDEuropeanChannelTunnelAutomotive,
-                        "H4" => TrainCategory::RfDEuropeanChannelTunnelContractServices,
-                        "H5" => TrainCategory::RfDEuropeanChannelTunnelHaulmark,
-                        "H6" => TrainCategory::RfDEuropeanChannelTunnelJointVenture,
-                        _ => {
-                            return Err(ScheduleApplyError::InvalidTrainCategory(
-                                train_category.clone(),
-                            ))
-                        }
-                    };
-                    schedule.headcode = train_identity.trim().to_string();
-                    schedule.portion_id = *portion_id;
-                    schedule.power_type = match power_type.trim() {
-                        "" => PowerType::NotSpecified,
-                        "D" => PowerType::Diesel,
-                        "DEM" => PowerType::DieselElectricMultipleUnit,
-                        "DMU" => PowerType::DieselMechanicalMultipleUnit,
-                        "E" => PowerType::Electric,
-                        "ED" => PowerType::ElectroDiesel,
-                        "EML" => PowerType::EMUPlusLocomotive,
-                        "EMU" => PowerType::ElectricMultipleUnit,
-                        "HST" => PowerType::HighSpeedTrain,
-                        _ => return Err(ScheduleApplyError::InvalidPowerType(power_type.clone())),
-                    };
-                    schedule.timing_load = if schedule.power_type
-                        == PowerType::DieselMechanicalMultipleUnit
-                        || schedule.power_type == PowerType::DieselElectricMultipleUnit
-                    {
-                        match timing_load.trim() {
-                            "" => TimingLoad::NotSpecified,
-                            "69" => TimingLoad::Class17201721Or1722,
-                            "A" => TimingLoad::Class141To144,
-                            "E" => TimingLoad::Class158168170Or175,
-                            "N" => TimingLoad::Class1650,
-                            "S" => TimingLoad::Class150153155Or156,
-                            "T" => TimingLoad::Class1651Or166,
-                            "V" => TimingLoad::Class220Or221,
-                            "X" => TimingLoad::Class159,
-                            "D1" => TimingLoad::DMUPowerCarTrailer,
-                            "D2" => TimingLoad::DMU2PowerCarsTrailer,
-                            "D3" => TimingLoad::DMUPowerTwin,
-                            _ => {
-                                if let Ok(n) = timing_load.trim().parse::<u16>() {
-                                    TimingLoad::SpecificClass(n)
-                                } else {
-                                    return Err(ScheduleApplyError::InvalidTimingLoad(
-                                        timing_load.clone(),
-                                    ));
-                                }
-                            }
-                        }
-                    } else if schedule.power_type == PowerType::ElectricMultipleUnit {
-                        match timing_load.trim() {
-                            "" => TimingLoad::NotSpecified,
-                            "AT" => TimingLoad::AcceleratedTimings,
-                            "E" => TimingLoad::Class458,
-                            "0" => TimingLoad::Class380,
-                            "506" => TimingLoad::Class3501110MPH,
-                            _ => {
-                                if let Ok(n) = timing_load.trim().parse::<u16>() {
-                                    TimingLoad::SpecificClass(n)
-                                } else {
-                                    return Err(ScheduleApplyError::InvalidTimingLoad(
-                                        timing_load.clone(),
-                                    ));
-                                }
-                            }
-                        }
-                    } else if schedule.power_type == PowerType::Diesel
-                        || schedule.power_type == PowerType::Electric
-                        || schedule.power_type == PowerType::ElectroDiesel
-                    {
-                        if timing_load.trim().is_empty() {
-                            TimingLoad::NotSpecified
-                        } else if schedule.power_type == PowerType::Electric
-                            && timing_load.trim() == "325"
-                        {
-                            TimingLoad::Class325ElectricParcelsUnit
-                        } else if let Ok(n) = timing_load.trim().parse::<u16>() {
-                            TimingLoad::LoadInTonnes(n)
-                        } else {
-                            return Err(ScheduleApplyError::InvalidTimingLoad(timing_load.clone()));
-                        }
-                    } else {
-                        TimingLoad::NotSpecified
-                    };
-                    schedule.speed = speed.trim().parse().ok().unwrap_or(0);
-                    for c in operating_characteristics.chars() {
-                        match c {
-                            'B' => schedule
-                                .operating_characteristics
-                                .push(OperatingCharacteristic::VacuumBraked),
-                            'C' => schedule
-                                .operating_characteristics
-                                .push(OperatingCharacteristic::TimedAt100MPH),
-                            'D' => schedule
-                                .operating_characteristics
-                                .push(OperatingCharacteristic::DOOCoachingStockTrains),
-                            'E' => schedule
-                                .operating_characteristics
-                                .push(OperatingCharacteristic::ConveysMark4Coaches),
-                            'G' => schedule
-                                .operating_characteristics
-                                .push(OperatingCharacteristic::GuardRequired),
-                            'M' => schedule
-                                .operating_characteristics
-                                .push(OperatingCharacteristic::TimedAt110MPH),
-                            'P' => schedule
-                                .operating_characteristics
-                                .push(OperatingCharacteristic::PushPullTrain),
-                            'Q' => schedule
-                                .operating_characteristics
-                                .push(OperatingCharacteristic::RunsAsRequired),
-                            'R' => schedule
-                                .operating_characteristics
-                                .push(OperatingCharacteristic::AirConditionedWithPASystem),
-                            'S' => schedule
-                                .operating_characteristics
-                                .push(OperatingCharacteristic::SteamHeated),
-                            'Y' => schedule
-                                .operating_characteristics
-                                .push(OperatingCharacteristic::RunsToTerminalsAsRequired),
-                            'Z' => schedule
-                                .operating_characteristics
-                                .push(OperatingCharacteristic::MayConveyTrafficToSB1CGauge),
-                            ' ' => (),
-                            _ => return Err(ScheduleApplyError::InvalidOperatingCharacteristic(c)),
-                        };
-                    }
-                    schedule.seating_class = match *seating_class {
-                        ' ' => SeatingClass::FirstAndStandard,
-                        'B' => SeatingClass::FirstAndStandard,
-                        'S' => SeatingClass::StandardOnly,
-                        _ => return Err(ScheduleApplyError::InvalidSeatingClass(*seating_class)),
-                    };
-                    schedule.sleepers = match *sleepers {
-                        'B' => Sleepers::FirstAndStandard,
-                        'F' => Sleepers::FirstOnly,
-                        'S' => Sleepers::StandardOnly,
-                        ' ' => Sleepers::NotSpecified,
-                        _ => return Err(ScheduleApplyError::InvalidSleepers(*sleepers)),
-                    };
-                    schedule.reservations = match *reservations {
-                        'A' => Reservations::Compulsory,
-                        'E' => Reservations::CompulsoryForBicycles,
-                        'R' => Reservations::Recommended,
-                        'S' => Reservations::Possible,
-                        ' ' => Reservations::NotSpecified,
-                        _ => return Err(ScheduleApplyError::InvalidReservations(*reservations)),
-                    };
-                    for c in catering_code.chars() {
-                        match c {
-                            'C' => schedule.catering.push(Catering::BuffetService),
-                            'F' => schedule.catering.push(Catering::RestaurantCarForFirstClass),
-                            'H' => schedule.catering.push(Catering::HotFood),
-                            'M' => schedule.catering.push(Catering::MealForFirstClass),
-                            'P' => schedule.catering.push(Catering::WheelchairReservations),
-                            'R' => schedule.catering.push(Catering::Restaurant),
-                            'T' => schedule.catering.push(Catering::TrolleyService),
-                            ' ' => (),
-                            _ => return Err(ScheduleApplyError::InvalidCateringCode(c)),
-                        };
-                    }
-                    schedule.stp_indicator = match *stp_indicator {
-                        'C' => STPIndicator::STPCancellationOfPermanentAssociation,
-                        'N' => STPIndicator::NewSTPAssociation,
-                        'O' => STPIndicator::STPOverlayOfPermanentAssociation,
-                        'P' => STPIndicator::PermanentAssociation,
-                        _ => return Err(ScheduleApplyError::InvalidSTPIndicator(*stp_indicator)),
-                    };
+                    bs_record_to_schedule(
+                        &mut schedule,
+                        &uid,
+                        date_runs_from,
+                        date_runs_to,
+                        days_run,
+                        bank_holiday_running,
+                        train_status,
+                        train_category,
+                        train_identity,
+                        portion_id,
+                        power_type,
+                        timing_load,
+                        speed,
+                        operating_characteristics,
+                        seating_class,
+                        sleepers,
+                        reservations,
+                        catering_code,
+                        stp_indicator,
+                    )?;
                 }
                 CIFRecord::BasicScheduleExtended {
                     traction_class: _,
@@ -679,7 +473,10 @@ impl ScheduleDatabase {
             }
         }
 
-        self.schedules.insert(schedule.train_uid.clone(), schedule);
+        self.schedules
+            .entry(schedule.train_uid.clone())
+            .and_modify(|v| v.push(schedule))
+            .or_insert(vec![]);
         Ok(())
     }
 }
@@ -1052,4 +849,279 @@ impl FromStr for JourneyTime {
         }
         Ok(time)
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn bs_record_to_schedule(
+    schedule: &mut Schedule,
+    uid: &str,
+    date_runs_from: &str,
+    date_runs_to: &str,
+    days_run: &str,
+    bank_holiday_running: &char,
+    train_status: &char,
+    train_category: &str,
+    train_identity: &str,
+    portion_id: &char,
+    power_type: &str,
+    timing_load: &str,
+    speed: &str,
+    operating_characteristics: &str,
+    seating_class: &char,
+    sleepers: &char,
+    reservations: &char,
+    catering_code: &str,
+    stp_indicator: &char,
+) -> Result<(), ScheduleApplyError> {
+    schedule.train_uid = uid.to_string();
+    schedule.runs_from = NaiveDate::parse_from_str(date_runs_from, "%y%m%d")
+        .map_err(|_| ScheduleApplyError::InvalidScheduleDate(date_runs_from.to_string()))?;
+    schedule.runs_to = NaiveDate::parse_from_str(date_runs_to, "%y%m%d")
+        .map_err(|_| ScheduleApplyError::InvalidScheduleDate(date_runs_to.to_string()))?;
+    schedule.days_run = DaysRun::from_bits(
+        u8::from_str_radix(days_run, 2)
+            .map_err(|_| ScheduleApplyError::InvalidDaysRun(days_run.to_string()))?,
+    )
+    .ok_or(ScheduleApplyError::InvalidDaysRun(days_run.to_string()))?;
+    schedule.bank_holiday_running = match bank_holiday_running {
+        'X' => BankHolidayRunning::NotOnSpecificBankHolidayMondays,
+        'G' => BankHolidayRunning::NotOnGlasgowBankHolidays,
+        _ => BankHolidayRunning::RunsNormally,
+    };
+    schedule.train_status = match train_status {
+        ' ' => TrainStatus::NotSpecified,
+        'B' => TrainStatus::Bus,
+        'F' => TrainStatus::Freight,
+        'P' => TrainStatus::PassengerAndParcels,
+        'S' => TrainStatus::Ship,
+        'T' => TrainStatus::Trip,
+        '1' => TrainStatus::STPPassengerAndParcels,
+        '2' => TrainStatus::STPFreight,
+        '3' => TrainStatus::STPTrip,
+        '4' => TrainStatus::STPShip,
+        '5' => TrainStatus::STPBus,
+        _ => return Err(ScheduleApplyError::InvalidTrainStatus(*train_status)),
+    };
+    schedule.train_category = match train_category {
+        "  " => TrainCategory::NotSpecified,
+        "OL" => TrainCategory::LondonUnderground,
+        "OU" => TrainCategory::UnadvertisedOrdinaryPassenger,
+        "OO" => TrainCategory::OrdinaryPassenger,
+        "OS" => TrainCategory::StaffTrain,
+        "OW" => TrainCategory::Mixed,
+        "XC" => TrainCategory::ChannelTunnel,
+        "XD" => TrainCategory::Sleeper,
+        "XI" => TrainCategory::International,
+        "XR" => TrainCategory::Motorail,
+        "XU" => TrainCategory::UnadvertisedExpress,
+        "XX" => TrainCategory::ExpressPassenger,
+        "XZ" => TrainCategory::SleeperDomestic,
+        "BR" => TrainCategory::BusReplacementDueToEngineering,
+        "BS" => TrainCategory::BusWTTService,
+        "SS" => TrainCategory::Ship,
+        "EE" => TrainCategory::EmptyCoachingStock,
+        "EL" => TrainCategory::ECSLondonUnderground,
+        "ES" => TrainCategory::ECSAndStaff,
+        "JJ" => TrainCategory::Postal,
+        "PM" => TrainCategory::PostOfficeControlledParcels,
+        "PP" => TrainCategory::Parcels,
+        "PV" => TrainCategory::EmptyNPCCS,
+        "DD" => TrainCategory::Departmental,
+        "DH" => TrainCategory::CivilEngineer,
+        "DI" => TrainCategory::MechanicalAndElectricalEngineer,
+        "DQ" => TrainCategory::Stores,
+        "DT" => TrainCategory::Test,
+        "DY" => TrainCategory::SignalAndTelecommunicationsEngineer,
+        "ZB" => TrainCategory::LocomotiveAndBrakeVan,
+        "ZZ" => TrainCategory::LightLocomotive,
+        "J2" => TrainCategory::RfDAutomotiveComponents,
+        "H2" => TrainCategory::RfDAutomotiveVehicles,
+        "J3" => TrainCategory::RfDEdibleProducts,
+        "J4" => TrainCategory::RfDIndustrialMinerals,
+        "J5" => TrainCategory::RfDChemicals,
+        "J6" => TrainCategory::RfDBuildingMaterials,
+        "J8" => TrainCategory::RfDGeneralMerchandise,
+        "H8" => TrainCategory::RfDEuropean,
+        "J9" => TrainCategory::RfDFreightlinerContracts,
+        "H9" => TrainCategory::RfDFreightlinerOther,
+        "A0" => TrainCategory::CoalDistributive,
+        "E0" => TrainCategory::CoalElectricityMGR,
+        "B0" => TrainCategory::CoalOtherAndNuclear,
+        "B1" => TrainCategory::Metals,
+        "B4" => TrainCategory::Aggregates,
+        "B5" => TrainCategory::DomesticAndIndustrialWaste,
+        "B6" => TrainCategory::BuildingMaterials,
+        "B7" => TrainCategory::PetroleumProducts,
+        "H0" => TrainCategory::RfDEuropeanChannelTunnelMixed,
+        "H1" => TrainCategory::RfDEuropeanChannelTunnelIntermodal,
+        "H3" => TrainCategory::RfDEuropeanChannelTunnelAutomotive,
+        "H4" => TrainCategory::RfDEuropeanChannelTunnelContractServices,
+        "H5" => TrainCategory::RfDEuropeanChannelTunnelHaulmark,
+        "H6" => TrainCategory::RfDEuropeanChannelTunnelJointVenture,
+        _ => {
+            return Err(ScheduleApplyError::InvalidTrainCategory(
+                train_category.to_string(),
+            ))
+        }
+    };
+    schedule.headcode = train_identity.trim().to_string();
+    schedule.portion_id = *portion_id;
+    schedule.power_type = match power_type.trim() {
+        "" => PowerType::NotSpecified,
+        "D" => PowerType::Diesel,
+        "DEM" => PowerType::DieselElectricMultipleUnit,
+        "DMU" => PowerType::DieselMechanicalMultipleUnit,
+        "E" => PowerType::Electric,
+        "ED" => PowerType::ElectroDiesel,
+        "EML" => PowerType::EMUPlusLocomotive,
+        "EMU" => PowerType::ElectricMultipleUnit,
+        "HST" => PowerType::HighSpeedTrain,
+        _ => return Err(ScheduleApplyError::InvalidPowerType(power_type.to_string())),
+    };
+    schedule.timing_load = if schedule.power_type == PowerType::DieselMechanicalMultipleUnit
+        || schedule.power_type == PowerType::DieselElectricMultipleUnit
+    {
+        match timing_load.trim() {
+            "" => TimingLoad::NotSpecified,
+            "69" => TimingLoad::Class17201721Or1722,
+            "A" => TimingLoad::Class141To144,
+            "E" => TimingLoad::Class158168170Or175,
+            "N" => TimingLoad::Class1650,
+            "S" => TimingLoad::Class150153155Or156,
+            "T" => TimingLoad::Class1651Or166,
+            "V" => TimingLoad::Class220Or221,
+            "X" => TimingLoad::Class159,
+            "D1" => TimingLoad::DMUPowerCarTrailer,
+            "D2" => TimingLoad::DMU2PowerCarsTrailer,
+            "D3" => TimingLoad::DMUPowerTwin,
+            _ => {
+                if let Ok(n) = timing_load.trim().parse::<u16>() {
+                    TimingLoad::SpecificClass(n)
+                } else {
+                    return Err(ScheduleApplyError::InvalidTimingLoad(
+                        timing_load.to_string(),
+                    ));
+                }
+            }
+        }
+    } else if schedule.power_type == PowerType::ElectricMultipleUnit {
+        match timing_load.trim() {
+            "" => TimingLoad::NotSpecified,
+            "AT" => TimingLoad::AcceleratedTimings,
+            "E" => TimingLoad::Class458,
+            "0" => TimingLoad::Class380,
+            "506" => TimingLoad::Class3501110MPH,
+            _ => {
+                if let Ok(n) = timing_load.trim().parse::<u16>() {
+                    TimingLoad::SpecificClass(n)
+                } else {
+                    return Err(ScheduleApplyError::InvalidTimingLoad(
+                        timing_load.to_string(),
+                    ));
+                }
+            }
+        }
+    } else if schedule.power_type == PowerType::Diesel
+        || schedule.power_type == PowerType::Electric
+        || schedule.power_type == PowerType::ElectroDiesel
+    {
+        if timing_load.trim().is_empty() {
+            TimingLoad::NotSpecified
+        } else if schedule.power_type == PowerType::Electric && timing_load.trim() == "325" {
+            TimingLoad::Class325ElectricParcelsUnit
+        } else if let Ok(n) = timing_load.trim().parse::<u16>() {
+            TimingLoad::LoadInTonnes(n)
+        } else {
+            return Err(ScheduleApplyError::InvalidTimingLoad(
+                timing_load.to_string(),
+            ));
+        }
+    } else {
+        TimingLoad::NotSpecified
+    };
+    schedule.speed = speed.trim().parse().ok().unwrap_or(0);
+    for c in operating_characteristics.chars() {
+        match c {
+            'B' => schedule
+                .operating_characteristics
+                .push(OperatingCharacteristic::VacuumBraked),
+            'C' => schedule
+                .operating_characteristics
+                .push(OperatingCharacteristic::TimedAt100MPH),
+            'D' => schedule
+                .operating_characteristics
+                .push(OperatingCharacteristic::DOOCoachingStockTrains),
+            'E' => schedule
+                .operating_characteristics
+                .push(OperatingCharacteristic::ConveysMark4Coaches),
+            'G' => schedule
+                .operating_characteristics
+                .push(OperatingCharacteristic::GuardRequired),
+            'M' => schedule
+                .operating_characteristics
+                .push(OperatingCharacteristic::TimedAt110MPH),
+            'P' => schedule
+                .operating_characteristics
+                .push(OperatingCharacteristic::PushPullTrain),
+            'Q' => schedule
+                .operating_characteristics
+                .push(OperatingCharacteristic::RunsAsRequired),
+            'R' => schedule
+                .operating_characteristics
+                .push(OperatingCharacteristic::AirConditionedWithPASystem),
+            'S' => schedule
+                .operating_characteristics
+                .push(OperatingCharacteristic::SteamHeated),
+            'Y' => schedule
+                .operating_characteristics
+                .push(OperatingCharacteristic::RunsToTerminalsAsRequired),
+            'Z' => schedule
+                .operating_characteristics
+                .push(OperatingCharacteristic::MayConveyTrafficToSB1CGauge),
+            ' ' => (),
+            _ => return Err(ScheduleApplyError::InvalidOperatingCharacteristic(c)),
+        };
+    }
+    schedule.seating_class = match seating_class {
+        ' ' => SeatingClass::FirstAndStandard,
+        'B' => SeatingClass::FirstAndStandard,
+        'S' => SeatingClass::StandardOnly,
+        _ => return Err(ScheduleApplyError::InvalidSeatingClass(*seating_class)),
+    };
+    schedule.sleepers = match sleepers {
+        'B' => Sleepers::FirstAndStandard,
+        'F' => Sleepers::FirstOnly,
+        'S' => Sleepers::StandardOnly,
+        ' ' => Sleepers::NotSpecified,
+        _ => return Err(ScheduleApplyError::InvalidSleepers(*sleepers)),
+    };
+    schedule.reservations = match reservations {
+        'A' => Reservations::Compulsory,
+        'E' => Reservations::CompulsoryForBicycles,
+        'R' => Reservations::Recommended,
+        'S' => Reservations::Possible,
+        ' ' => Reservations::NotSpecified,
+        _ => return Err(ScheduleApplyError::InvalidReservations(*reservations)),
+    };
+    for c in catering_code.chars() {
+        match c {
+            'C' => schedule.catering.push(Catering::BuffetService),
+            'F' => schedule.catering.push(Catering::RestaurantCarForFirstClass),
+            'H' => schedule.catering.push(Catering::HotFood),
+            'M' => schedule.catering.push(Catering::MealForFirstClass),
+            'P' => schedule.catering.push(Catering::WheelchairReservations),
+            'R' => schedule.catering.push(Catering::Restaurant),
+            'T' => schedule.catering.push(Catering::TrolleyService),
+            ' ' => (),
+            _ => return Err(ScheduleApplyError::InvalidCateringCode(c)),
+        };
+    }
+    schedule.stp_indicator = match stp_indicator {
+        'C' => STPIndicator::STPCancellationOfPermanentAssociation,
+        'N' => STPIndicator::NewSTPAssociation,
+        'O' => STPIndicator::STPOverlayOfPermanentAssociation,
+        'P' => STPIndicator::PermanentAssociation,
+        _ => return Err(ScheduleApplyError::InvalidSTPIndicator(*stp_indicator)),
+    };
+    Ok(())
 }
