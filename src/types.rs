@@ -151,7 +151,7 @@ pub enum CIFRecord {
         #[field_length = 4]
         headcode: String,
         #[field_length = 1]
-        course_indicator: u32,
+        course_indicator: char,
         #[field_length = 8]
         train_service_code: String,
         #[field_length = 1]
