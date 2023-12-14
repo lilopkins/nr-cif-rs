@@ -3,7 +3,10 @@ use libflate::gzip::Decoder;
 use nr_cif::prelude::*;
 use ron::ser::PrettyConfig;
 
-use std::{fs::{File, self}, env};
+use std::{
+    env,
+    fs::{self, File},
+};
 
 #[test]
 fn test_parse_full() {
@@ -47,11 +50,16 @@ fn test_parse_full() {
             }
 
             log::info!("Complete.\nErrors: {errors:?}");
-            if env::var("SAVE_PARSED_OUTPUT").unwrap_or("no".to_string()).to_ascii_lowercase() == "yes" {
+            if env::var("SAVE_PARSED_OUTPUT")
+                .unwrap_or("no".to_string())
+                .to_ascii_lowercase()
+                == "yes"
+            {
                 let path = "./target/test_parsed_schedule.ron";
                 log::info!("Saving output to {path}.");
                 let f = fs::File::create(path).expect("Should be able to write file.");
-                ron::ser::to_writer_pretty(f, &schedule, PrettyConfig::default()).expect("Should be able to write output.");
+                ron::ser::to_writer_pretty(f, &schedule, PrettyConfig::default())
+                    .expect("Should be able to write output.");
             } else {
                 log::info!("Not saving output.");
             }

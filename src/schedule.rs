@@ -4,9 +4,9 @@ use bitflags::bitflags;
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use getset::Getters;
 use log::{info, trace, warn};
-use thiserror::Error;
 #[cfg(feature = "serde")]
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 use crate::types::{CIFFile, CIFRecord};
 
