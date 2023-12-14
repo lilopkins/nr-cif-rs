@@ -5,6 +5,8 @@ use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use getset::Getters;
 use log::{info, trace, warn};
 use thiserror::Error;
+#[cfg(feature = "serde")]
+use serde::{Serialize, Deserialize};
 
 use crate::types::{CIFFile, CIFRecord};
 
@@ -43,11 +45,17 @@ pub enum ScheduleApplyError {
 }
 
 #[derive(Debug, Clone, Getters)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ScheduleDatabase {
     #[getset(get = "pub")]
     extract_date_time: NaiveDateTime,
+    /// A map of TIPLOC to [`TIPLOC`] objects, with extra information like name and
+    /// CRS (3 alpha code).
     #[getset(get = "pub")]
     tiplocs: HashMap<String, TIPLOC>,
+    /// A map of schedule UIDs to a list of applicable schedules. These should be filtered by the
+    /// validity date for the period in question, then you should get the one at the latest index
+    /// valid in your time period. This will be the schedule to take effect.
     #[getset(get = "pub")]
     schedules: HashMap<String, Vec<Schedule>>,
 }
@@ -354,7 +362,7 @@ impl ScheduleDatabase {
                     activity,
                     ..
                 } => schedule.journey.push(JourneyLocation {
-                    tiploc: location.trim().to_string(),
+                    tiploc: location[0..7].trim().to_string(),
                     arrival_time: None,
                     departure_time: Some(scheduled_departure_time.parse()?),
                     passing_time: None,
@@ -376,7 +384,7 @@ impl ScheduleDatabase {
                     activity,
                     ..
                 } => schedule.journey.push(JourneyLocation {
-                    tiploc: location.trim().to_string(),
+                    tiploc: location[0..7].trim().to_string(),
                     arrival_time: if scheduled_arrival_time.trim().is_empty() {
                         None
                     } else {
@@ -414,7 +422,7 @@ impl ScheduleDatabase {
                     activity,
                     ..
                 } => schedule.journey.push(JourneyLocation {
-                    tiploc: location.trim().to_string(),
+                    tiploc: location[0..7].trim().to_string(),
                     arrival_time: Some(scheduled_arrival_time.parse()?),
                     departure_time: None,
                     passing_time: None,
@@ -438,6 +446,7 @@ impl ScheduleDatabase {
 }
 
 #[derive(Debug, Clone, Getters)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct TIPLOC {
     /// The TIPLOC code of this location.
     #[getset(get = "pub")]
@@ -451,6 +460,7 @@ pub struct TIPLOC {
 }
 
 #[derive(Debug, Clone, Getters)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Schedule {
     /// The service identifier.
     #[getset(get = "pub")]
@@ -533,6 +543,7 @@ impl Schedule {
 
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
     pub struct DaysRun: u8 {
         const MONDAY    = 0b1000000;
         const TUESDAY   = 0b0100000;
@@ -548,6 +559,7 @@ bitflags! {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum BankHolidayRunning {
     RunsNormally,
     NotOnSpecificBankHolidayMondays,
@@ -555,6 +567,7 @@ pub enum BankHolidayRunning {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum TrainStatus {
     Bus,
     Freight,
@@ -570,6 +583,7 @@ pub enum TrainStatus {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum TrainCategory {
     NotSpecified,
     LondonUnderground,
@@ -629,6 +643,7 @@ pub enum TrainCategory {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum PowerType {
     Diesel,
     DieselElectricMultipleUnit,
@@ -642,6 +657,7 @@ pub enum PowerType {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum OperatingCharacteristic {
     VacuumBraked,
     TimedAt100MPH,
@@ -658,6 +674,7 @@ pub enum OperatingCharacteristic {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum TimingLoad {
     /// Unspecifed
     NotSpecified,
@@ -700,6 +717,7 @@ pub enum TimingLoad {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum SeatingClass {
     FirstAndStandard,
     StandardOnly,
@@ -707,6 +725,7 @@ pub enum SeatingClass {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum Sleepers {
     FirstAndStandard,
     FirstOnly,
@@ -715,6 +734,7 @@ pub enum Sleepers {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum Reservations {
     Compulsory,
     CompulsoryForBicycles,
@@ -724,6 +744,7 @@ pub enum Reservations {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum Catering {
     NotSpecified,
     BuffetService,
@@ -736,6 +757,7 @@ pub enum Catering {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum STPIndicator {
     NewSTPAssociation,
     STPCancellationOfPermanentAssociation,
@@ -744,6 +766,7 @@ pub enum STPIndicator {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Getters)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct JourneyLocation {
     #[getset(get = "pub")]
     tiploc: String,
@@ -766,6 +789,7 @@ pub struct JourneyLocation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Getters)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct JourneyTime {
     #[getset(get = "pub")]
     hour: u8,
