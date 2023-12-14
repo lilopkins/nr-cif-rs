@@ -4,6 +4,8 @@ use bitflags::bitflags;
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use getset::Getters;
 use log::{info, trace, warn};
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::types::{CIFFile, CIFRecord};
@@ -43,11 +45,17 @@ pub enum ScheduleApplyError {
 }
 
 #[derive(Debug, Clone, Getters)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ScheduleDatabase {
     #[getset(get = "pub")]
     extract_date_time: NaiveDateTime,
+    /// A map of TIPLOC to [`TIPLOC`] objects, with extra information like name and
+    /// CRS (3 alpha code).
     #[getset(get = "pub")]
     tiplocs: HashMap<String, TIPLOC>,
+    /// A map of schedule UIDs to a list of applicable schedules. These should be filtered by the
+    /// validity date for the period in question, then you should get the one at the latest index
+    /// valid in your time period. This will be the schedule to take effect.
     #[getset(get = "pub")]
     schedules: HashMap<String, Vec<Schedule>>,
 }
@@ -74,6 +82,27 @@ impl ScheduleDatabase {
         self.apply_records(file.records())
     }
 
+    /// Finds a CRS from a given TIPLOC. If the TIPLOC is not immediately
+    /// associated with a CRS, this will check other TIPLOCs associated with
+    /// the same STANOX.
+    pub fn get_crs_from_tiploc<S: AsRef<str>>(&self, tiploc: S) -> Vec<String> {
+        if let Some(base_tiploc) = self.tiplocs().get(tiploc.as_ref()) {
+            if !base_tiploc.three_alpha_code().is_empty() {
+                return vec![base_tiploc.three_alpha_code().clone()];
+            }
+
+            let stanox = *base_tiploc.stanox();
+            let mut crs = vec![];
+            for (_, tiploc) in self.tiplocs().iter().filter(|(_, t)| stanox == *t.stanox()) {
+                if !tiploc.three_alpha_code().is_empty() {
+                    crs.push(tiploc.three_alpha_code().clone());
+                }
+            }
+            return crs;
+        }
+        vec![]
+    }
+
     /// Apply a list of records onto this schedule database.
     /// This can reset the database if this includes a full update.
     /// Returns a list of errors and their respective record index.
@@ -90,40 +119,19 @@ impl ScheduleDatabase {
             bundle.push(record);
 
             // Check type
-            let submit = match record.kind() {
-                "HD" => true,
-                "ZZ" => true,
-                "AA" => true,
-                "LT" => true,
-                "TI" => true,
-                "TA" => true,
-                "TD" => true,
-                "BS" => {
+            let submit = match &record {
+                CIFRecord::Header { .. } => true,
+                CIFRecord::Trailer => true,
+                CIFRecord::Association { .. } => true,
+                CIFRecord::LocationTerminate { .. } => true,
+                CIFRecord::TIPLOCInsert { .. } => true,
+                CIFRecord::TIPLOCAmend { .. } => true,
+                CIFRecord::TIPLOCDelete { .. } => true,
+                CIFRecord::BasicSchedule { .. } => {
                     if let CIFRecord::BasicSchedule {
                         transaction_type,
-                        train_uid: _,
-                        date_runs_from: _,
-                        date_runs_to: _,
-                        days_run: _,
-                        bank_holiday_running: _,
-                        train_status: _,
-                        train_category: _,
-                        train_identity: _,
-                        headcode: _,
-                        course_indicator: _,
-                        train_service_code: _,
-                        portion_id: _,
-                        power_type: _,
-                        timing_load: _,
-                        speed: _,
-                        operating_characteristics: _,
-                        seating_class: _,
-                        sleepers: _,
-                        reservations: _,
-                        connection_indicator: _,
-                        catering_code: _,
-                        service_branding: _,
                         stp_indicator,
+                        ..
                     } = record
                     {
                         // only submit a BS record alone if it's a delete, or a cancellation
@@ -134,7 +142,7 @@ impl ScheduleDatabase {
                 }
                 _ => false,
             };
-            trace!("Record type: {}, submitting: {submit}", record.kind());
+            trace!("Record: {:?}, submitting: {submit}", record);
 
             if submit {
                 let r = if bundle.len() == 1 {
@@ -170,15 +178,10 @@ impl ScheduleDatabase {
     fn apply_single_record(&mut self, record: &CIFRecord) -> Result<(), ScheduleApplyError> {
         match record {
             CIFRecord::Header {
-                file_mainframe_identity: _,
                 date_of_extract,
                 time_of_extract,
-                current_file_reference: _,
-                last_file_reference: _,
                 update_indicator,
-                version: _,
-                user_start_date: _,
-                user_end_date: _,
+                ..
             } => {
                 if *update_indicator == 'F' {
                     // full update, empty database
@@ -200,14 +203,10 @@ impl ScheduleDatabase {
 
             CIFRecord::TIPLOCInsert {
                 tiploc,
-                capitals_identification: _,
-                nlc: _,
-                nlc_check_char: _,
                 tps_description,
-                stanox: _,
-                po_mcp_code: _,
                 three_alpha_code,
-                nlc_description: _,
+                stanox,
+                ..
             } => {
                 info!("New TIPLOC: {}", tiploc.trim());
                 self.tiplocs.insert(
@@ -216,20 +215,17 @@ impl ScheduleDatabase {
                         tiploc: tiploc.trim().to_string(),
                         three_alpha_code: three_alpha_code.trim().to_string(),
                         description: tps_description.trim().to_string(),
+                        stanox: *stanox,
                     },
                 );
             }
             CIFRecord::TIPLOCAmend {
                 tiploc,
-                capitals_identification: _,
-                nlc: _,
-                nlc_check_char: _,
                 tps_description,
-                stanox: _,
-                po_mcp_code: _,
                 three_alpha_code,
-                nlc_description: _,
                 new_tiploc,
+                stanox,
+                ..
             } => {
                 info!("Amendment for TIPLOC {}", tiploc.trim());
                 let tiploc = if new_tiploc.trim().is_empty() {
@@ -244,6 +240,7 @@ impl ScheduleDatabase {
                         tiploc,
                         three_alpha_code: three_alpha_code.trim().to_string(),
                         description: tps_description.trim().to_string(),
+                        stanox: *stanox,
                     },
                 );
             }
@@ -262,9 +259,6 @@ impl ScheduleDatabase {
                 train_status,
                 train_category,
                 train_identity,
-                headcode: _,
-                course_indicator: _,
-                train_service_code: _,
                 portion_id,
                 power_type,
                 timing_load,
@@ -273,10 +267,9 @@ impl ScheduleDatabase {
                 seating_class,
                 sleepers,
                 reservations,
-                connection_indicator: _,
                 catering_code,
-                service_branding: _,
                 stp_indicator,
+                ..
             } => {
                 assert!(
                     *transaction_type == 'D' || *stp_indicator == 'C',
@@ -338,9 +331,6 @@ impl ScheduleDatabase {
                     train_status,
                     train_category,
                     train_identity,
-                    headcode: _,
-                    course_indicator: _,
-                    train_service_code: _,
                     portion_id,
                     power_type,
                     timing_load,
@@ -349,10 +339,9 @@ impl ScheduleDatabase {
                     seating_class,
                     sleepers,
                     reservations,
-                    connection_indicator: _,
                     catering_code,
-                    service_branding: _,
                     stp_indicator,
+                    ..
                 } => {
                     let uid = train_uid.trim().to_string();
                     if *transaction_type == 'R' && !self.schedules.contains_key(&uid) {
@@ -382,10 +371,9 @@ impl ScheduleDatabase {
                     )?;
                 }
                 CIFRecord::BasicScheduleExtended {
-                    traction_class: _,
-                    uic_code: _,
                     atoc_code,
                     applicable_timetable_code,
+                    ..
                 } => {
                     schedule.atoc_code = atoc_code.trim().to_string();
                     schedule.subject_to_performance_monitoring = *applicable_timetable_code == 'Y';
@@ -396,12 +384,10 @@ impl ScheduleDatabase {
                     public_departure_time,
                     platform,
                     line,
-                    engineering_allowance: _,
-                    pathing_allowance: _,
                     activity,
-                    performance_allowance: _,
+                    ..
                 } => schedule.journey.push(JourneyLocation {
-                    tiploc: location.trim().to_string(),
+                    tiploc: location[0..7].trim().to_string(),
                     arrival_time: None,
                     departure_time: Some(scheduled_departure_time.parse()?),
                     passing_time: None,
@@ -420,13 +406,10 @@ impl ScheduleDatabase {
                     public_departure_time,
                     platform,
                     line,
-                    path: _,
                     activity,
-                    engineering_allowance: _,
-                    pathing_allowance: _,
-                    performance_allowance: _,
+                    ..
                 } => schedule.journey.push(JourneyLocation {
-                    tiploc: location.trim().to_string(),
+                    tiploc: location[0..7].trim().to_string(),
                     arrival_time: if scheduled_arrival_time.trim().is_empty() {
                         None
                     } else {
@@ -461,10 +444,10 @@ impl ScheduleDatabase {
                     scheduled_arrival_time,
                     public_arrival_time,
                     platform,
-                    path: _,
                     activity,
+                    ..
                 } => schedule.journey.push(JourneyLocation {
-                    tiploc: location.trim().to_string(),
+                    tiploc: location[0..7].trim().to_string(),
                     arrival_time: Some(scheduled_arrival_time.parse()?),
                     departure_time: None,
                     passing_time: None,
@@ -488,6 +471,7 @@ impl ScheduleDatabase {
 }
 
 #[derive(Debug, Clone, Getters)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct TIPLOC {
     /// The TIPLOC code of this location.
     #[getset(get = "pub")]
@@ -498,9 +482,13 @@ pub struct TIPLOC {
     /// The description of this location.
     #[getset(get = "pub")]
     description: String,
+    /// The STANOX of this location.
+    #[getset(get = "pub")]
+    stanox: u32,
 }
 
 #[derive(Debug, Clone, Getters)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Schedule {
     /// The service identifier.
     #[getset(get = "pub")]
@@ -583,6 +571,7 @@ impl Schedule {
 
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
     pub struct DaysRun: u8 {
         const MONDAY    = 0b1000000;
         const TUESDAY   = 0b0100000;
@@ -598,6 +587,7 @@ bitflags! {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum BankHolidayRunning {
     RunsNormally,
     NotOnSpecificBankHolidayMondays,
@@ -605,6 +595,7 @@ pub enum BankHolidayRunning {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum TrainStatus {
     Bus,
     Freight,
@@ -620,6 +611,7 @@ pub enum TrainStatus {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum TrainCategory {
     NotSpecified,
     LondonUnderground,
@@ -679,6 +671,7 @@ pub enum TrainCategory {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum PowerType {
     Diesel,
     DieselElectricMultipleUnit,
@@ -692,6 +685,7 @@ pub enum PowerType {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum OperatingCharacteristic {
     VacuumBraked,
     TimedAt100MPH,
@@ -708,6 +702,7 @@ pub enum OperatingCharacteristic {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum TimingLoad {
     /// Unspecifed
     NotSpecified,
@@ -750,6 +745,7 @@ pub enum TimingLoad {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum SeatingClass {
     FirstAndStandard,
     StandardOnly,
@@ -757,6 +753,7 @@ pub enum SeatingClass {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum Sleepers {
     FirstAndStandard,
     FirstOnly,
@@ -765,6 +762,7 @@ pub enum Sleepers {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum Reservations {
     Compulsory,
     CompulsoryForBicycles,
@@ -774,6 +772,7 @@ pub enum Reservations {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum Catering {
     NotSpecified,
     BuffetService,
@@ -786,6 +785,7 @@ pub enum Catering {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum STPIndicator {
     NewSTPAssociation,
     STPCancellationOfPermanentAssociation,
@@ -794,6 +794,7 @@ pub enum STPIndicator {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Getters)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct JourneyLocation {
     #[getset(get = "pub")]
     tiploc: String,
@@ -816,6 +817,7 @@ pub struct JourneyLocation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Getters)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct JourneyTime {
     #[getset(get = "pub")]
     hour: u8,

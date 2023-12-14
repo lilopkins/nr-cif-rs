@@ -1,8 +1,12 @@
 use chrono::NaiveDate;
 use libflate::gzip::Decoder;
 use nr_cif::prelude::*;
+use ron::ser::PrettyConfig;
 
-use std::fs::File;
+use std::{
+    env,
+    fs::{self, File},
+};
 
 #[test]
 fn test_parse_full() {
@@ -18,6 +22,7 @@ fn test_parse_full() {
             let mut schedule = ScheduleDatabase::new();
             let errors = schedule.apply_file(&file);
 
+            // Test cancelled services are registered
             let cancelled_service = "C11004";
             let cancelled_date = NaiveDate::parse_from_str("2024-06-01", "%Y-%m-%d").unwrap();
             let applicable_schedules = schedule
@@ -35,7 +40,61 @@ fn test_parse_full() {
                 panic!("Cancellation record was missed! {applicable_schedules:?}");
             }
 
-            log::info!("Complete.\n{schedule:#?}\nErrors: {errors:?}");
+            // Test TIPLOCs don't have trailing number (issue #9)
+            for (_, sched_stack) in schedule.schedules() {
+                for sched in sched_stack {
+                    for waypoint in sched.journey() {
+                        assert!(waypoint.tiploc().len() <= 7, "TIPLOC too long");
+                    }
+                }
+            }
+
+            // Test getting CRS from STANOX (issue #8)
+            assert!(
+                schedule
+                    .get_crs_from_tiploc("WATRLMN")
+                    .contains(&"WAT".to_string()),
+                "WATRLMN should have CRS 'WAT'."
+            );
+            assert!(
+                schedule
+                    .get_crs_from_tiploc("CLPHMJ1")
+                    .contains(&"CLJ".to_string()),
+                "CLPHMJ1 should have CRS 'CLJ'."
+            );
+            assert!(
+                schedule
+                    .get_crs_from_tiploc("CLPHMJW")
+                    .contains(&"CLJ".to_string()),
+                "CLPHMJW should have CRS 'CLJ'."
+            );
+            assert!(
+                schedule
+                    .get_crs_from_tiploc("VAUXHLM")
+                    .contains(&"VXH".to_string()),
+                "WREXGUB should have CRS 'WRX'."
+            );
+            assert!(
+                schedule
+                    .get_crs_from_tiploc("WEYBDGB")
+                    .contains(&"WYB".to_string()),
+                "WEYBDGB should have CRS 'WYB'."
+            );
+
+            log::info!("Complete.\nErrors: {errors:?}");
+            if env::var("SAVE_PARSED_OUTPUT")
+                .unwrap_or("no".to_string())
+                .to_ascii_lowercase()
+                == "yes"
+            {
+                let path = "./target/test_parsed_schedule.ron";
+                log::info!("Saving output to {path}.");
+                let f = fs::File::create(path).expect("Should be able to write file.");
+                ron::ser::to_writer_pretty(f, &schedule, PrettyConfig::default())
+                    .expect("Should be able to write output.");
+            } else {
+                log::info!("Not saving output.");
+            }
         }
         Err(e) => panic!("{e}"),
     }
