@@ -47,3 +47,10 @@ match cif_result {
 ```
 
 This can then be processed further manually.
+
+## Features
+
+Feature | Purpose
+--------|--------
+`serde` | Enable serialization and deserialization on the objects.
+`panic-on-first-error` | Panic if a parsing error is discovered. Mostly for testing.

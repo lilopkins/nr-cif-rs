@@ -49,6 +49,38 @@ fn test_parse_full() {
                 }
             }
 
+            // Test getting CRS from STANOX (issue #8)
+            assert!(
+                schedule
+                    .get_crs_from_tiploc("WATRLMN")
+                    .contains(&"WAT".to_string()),
+                "WATRLMN should have CRS 'WAT'."
+            );
+            assert!(
+                schedule
+                    .get_crs_from_tiploc("CLPHMJ1")
+                    .contains(&"CLJ".to_string()),
+                "CLPHMJ1 should have CRS 'CLJ'."
+            );
+            assert!(
+                schedule
+                    .get_crs_from_tiploc("CLPHMJW")
+                    .contains(&"CLJ".to_string()),
+                "CLPHMJW should have CRS 'CLJ'."
+            );
+            assert!(
+                schedule
+                    .get_crs_from_tiploc("VAUXHLM")
+                    .contains(&"VXH".to_string()),
+                "WREXGUB should have CRS 'WRX'."
+            );
+            assert!(
+                schedule
+                    .get_crs_from_tiploc("WEYBDGB")
+                    .contains(&"WYB".to_string()),
+                "WEYBDGB should have CRS 'WYB'."
+            );
+
             log::info!("Complete.\nErrors: {errors:?}");
             if env::var("SAVE_PARSED_OUTPUT")
                 .unwrap_or("no".to_string())

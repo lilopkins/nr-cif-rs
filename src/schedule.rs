@@ -82,6 +82,27 @@ impl ScheduleDatabase {
         self.apply_records(file.records())
     }
 
+    /// Finds a CRS from a given TIPLOC. If the TIPLOC is not immediately
+    /// associated with a CRS, this will check other TIPLOCs associated with
+    /// the same STANOX.
+    pub fn get_crs_from_tiploc<S: AsRef<str>>(&self, tiploc: S) -> Vec<String> {
+        if let Some(base_tiploc) = self.tiplocs().get(tiploc.as_ref()) {
+            if !base_tiploc.three_alpha_code().is_empty() {
+                return vec![base_tiploc.three_alpha_code().clone()];
+            }
+
+            let stanox = *base_tiploc.stanox();
+            let mut crs = vec![];
+            for (_, tiploc) in self.tiplocs().iter().filter(|(_, t)| stanox == *t.stanox()) {
+                if !tiploc.three_alpha_code().is_empty() {
+                    crs.push(tiploc.three_alpha_code().clone());
+                }
+            }
+            return crs;
+        }
+        vec![]
+    }
+
     /// Apply a list of records onto this schedule database.
     /// This can reset the database if this includes a full update.
     /// Returns a list of errors and their respective record index.
@@ -184,6 +205,7 @@ impl ScheduleDatabase {
                 tiploc,
                 tps_description,
                 three_alpha_code,
+                stanox,
                 ..
             } => {
                 info!("New TIPLOC: {}", tiploc.trim());
@@ -193,6 +215,7 @@ impl ScheduleDatabase {
                         tiploc: tiploc.trim().to_string(),
                         three_alpha_code: three_alpha_code.trim().to_string(),
                         description: tps_description.trim().to_string(),
+                        stanox: *stanox,
                     },
                 );
             }
@@ -201,6 +224,7 @@ impl ScheduleDatabase {
                 tps_description,
                 three_alpha_code,
                 new_tiploc,
+                stanox,
                 ..
             } => {
                 info!("Amendment for TIPLOC {}", tiploc.trim());
@@ -216,6 +240,7 @@ impl ScheduleDatabase {
                         tiploc,
                         three_alpha_code: three_alpha_code.trim().to_string(),
                         description: tps_description.trim().to_string(),
+                        stanox: *stanox,
                     },
                 );
             }
@@ -457,6 +482,9 @@ pub struct TIPLOC {
     /// The description of this location.
     #[getset(get = "pub")]
     description: String,
+    /// The STANOX of this location.
+    #[getset(get = "pub")]
+    stanox: u32,
 }
 
 #[derive(Debug, Clone, Getters)]
